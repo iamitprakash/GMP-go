@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	fmt.Println("Deployment: Final Release GMP Scheduler Module v1.0.0")
+	fmt.Println("Deployment: Final Release GMP Scheduler Module v2.0.0")
 
 	telemetry.StartServer(":8080")
 	fmt.Println("Telemetry endpoint running on :8080/debug/vars")

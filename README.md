@@ -1,5 +1,6 @@
 # 🚀 GMP-Go: The Pinnacle Distributed Execution Engine
 
+![Release](https://img.shields.io/badge/Release-v2.0.0-3fb950?style=flat&logo=github)
 ![Go Version](https://img.shields.io/badge/Go-1.24.x-00ADD8?style=flat&logo=go)
 ![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
