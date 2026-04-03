@@ -2,86 +2,129 @@ package queue
 
 import (
 	"errors"
-	"sync"
+	"runtime"
+	"sync/atomic"
 )
 
 var ErrQueueFull = errors.New("queue is full")
 var ErrQueueEmpty = errors.New("queue is empty")
 
-// BoundedQueue is a thread-safe fixed-size queue, suitable for local run queues.
-// We use generics so this package remains entirely independent of our gmp logic.
+type slot[T any] struct {
+	val T
+	seq uint64
+}
+
+// BoundedQueue represents a lock-free multi-producer multi-consumer (MPMC) ring buffer. 
+// Uses Dmitry Vyukov's array-based CAS queue algorithm for maximum throughput.
 type BoundedQueue[T any] struct {
-	items []T
-	head  int
-	tail  int
-	count int
-	size  int
-	mu    sync.Mutex
+	buffer []slot[T]
+	mask   uint64
+	head   uint64
+	tail   uint64
 }
 
-// NewBoundedQueue creates a new bounded queue with the given size.
-func NewBoundedQueue[T any](size int) *BoundedQueue[T] {
-	return &BoundedQueue[T]{
-		items: make([]T, size),
-		size:  size,
+func nextPowerOf2(v uint64) uint64 {
+	v--
+	v |= v >> 1
+	v |= v >> 2
+	v |= v >> 4
+	v |= v >> 8
+	v |= v >> 16
+	v |= v >> 32
+	v++
+	return v
+}
+
+// NewBoundedQueue creates a new lock-free queue. Capacity is rounded up to the nearest power of 2.
+func NewBoundedQueue[T any](capacity int) *BoundedQueue[T] {
+	cap64 := nextPowerOf2(uint64(capacity))
+	q := &BoundedQueue[T]{
+		buffer: make([]slot[T], cap64),
+		mask:   cap64 - 1,
 	}
+	for i := range q.buffer {
+		q.buffer[i].seq = uint64(i)
+	}
+	return q
 }
 
-// PushBack adds an item to the end of the queue. Returns an error if full.
+// PushBack atomically adds an item. Returns ErrQueueFull if full.
 func (q *BoundedQueue[T]) PushBack(item T) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	var cell *slot[T]
+	var seq, tail uint64
+	for {
+		tail = atomic.LoadUint64(&q.tail)
+		cell = &q.buffer[tail&q.mask]
+		seq = atomic.LoadUint64(&cell.seq)
+		dif := int64(seq) - int64(tail)
 
-	if q.count == q.size {
-		return ErrQueueFull
+		if dif == 0 {
+			if atomic.CompareAndSwapUint64(&q.tail, tail, tail+1) {
+				break // claimed the cell
+			}
+		} else if dif < 0 {
+			return ErrQueueFull // queue is full
+		} else {
+			runtime.Gosched() // Wait for another thread to modify
+		}
 	}
-	q.items[q.tail] = item
-	q.tail = (q.tail + 1) % q.size
-	q.count++
+	cell.val = item
+	atomic.StoreUint64(&cell.seq, tail+1)
 	return nil
 }
 
-// PopFront removes and returns an item from the front of the queue.
+// PopFront atomically removes and returns an item.
 func (q *BoundedQueue[T]) PopFront() (T, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
+	var cell *slot[T]
+	var seq, head uint64
 	var empty T
-	if q.count == 0 {
-		return empty, ErrQueueEmpty
+	for {
+		head = atomic.LoadUint64(&q.head)
+		cell = &q.buffer[head&q.mask]
+		seq = atomic.LoadUint64(&cell.seq)
+		dif := int64(seq) - int64(head+1)
+
+		if dif == 0 {
+			if atomic.CompareAndSwapUint64(&q.head, head, head+1) {
+				break // claimed the cell
+			}
+		} else if dif < 0 {
+			return empty, ErrQueueEmpty
+		} else {
+			runtime.Gosched()
+		}
 	}
-	item := q.items[q.head]
-	q.items[q.head] = empty // clear reference for GC
-	q.head = (q.head + 1) % q.size
-	q.count--
+	item := cell.val
+	cell.val = empty // free GC
+	atomic.StoreUint64(&cell.seq, head+q.mask+1)
 	return item, nil
 }
 
-// Len returns the current number of items.
+// Len approximated length of the Lock-Free queue.
 func (q *BoundedQueue[T]) Len() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.count
+	head := atomic.LoadUint64(&q.head)
+	tail := atomic.LoadUint64(&q.tail)
+	if tail > head {
+		return int(tail - head)
+	}
+	return 0
 }
 
-// TakeHalf removes up to half of the elements from this queue and returns them.
-// Used for work stealing by other Processors in the GMP model.
+// TakeHalf iteratively pops up to half the items, creating a work-stealing batch.
 func (q *BoundedQueue[T]) TakeHalf() []T {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	stealCount := q.count / 2
+	length := q.Len()
+	stealCount := length / 2
 	if stealCount == 0 {
 		return nil
 	}
 
 	stolen := make([]T, 0, stealCount)
 	for i := 0; i < stealCount; i++ {
-		stolen = append(stolen, q.items[q.head])
-		var empty T
-		q.items[q.head] = empty
-		q.head = (q.head + 1) % q.size
-		q.count--
+		if t, err := q.PopFront(); err == nil {
+			stolen = append(stolen, t)
+		} else {
+			break // if queue ran empty during steal
+		}
 	}
 	return stolen
 }

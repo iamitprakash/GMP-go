@@ -3,29 +3,37 @@ package gmp
 import (
 	"math/rand"
 	"sync/atomic"
+
+	"github.com/amitprakash/gmp-go/pkg/telemetry"
 )
 
 // M represents a Machine (OS Thread) in the GMP model.
-// It executes Tasks from its attached P.
 type M struct {
 	ID    int
 	Sched *Scheduler
-	P     *P
-	ticks uint64 // For checking global queue
+	P     *P // Dynamically assigned processor
+	ticks uint64
 }
 
-// NewM creates a new Machine assigned to the given Scheduler and Processor.
-func NewM(id int, s *Scheduler, p *P) *M {
+// NewM creates a new Machine unassigned.
+func NewM(id int, s *Scheduler) *M {
 	return &M{
 		ID:    id,
 		Sched: s,
-		P:     p,
 	}
 }
 
-// Run is the main event loop for the Machine, simulating an OS thread.
+// Run is the OS thread simulation.
 func (m *M) Run() {
 	defer m.Sched.wg.Done()
+	telemetry.ActiveMs.Add(1)
+	defer telemetry.ActiveMs.Add(-1)
+
+	p, ok := <-m.Sched.IdlePs
+	if !ok || p == nil {
+		return 
+	}
+	m.P = p
 
 	for {
 		if m.Sched.isStopped() {
@@ -34,14 +42,37 @@ func (m *M) Run() {
 
 		t := m.findWork()
 		if t != nil {
-			t.Fn(m.Sched.ctx)
-			m.ticks++
+			telemetry.TasksExecuted.Add(1)
+
+			if t.Blocking {
+				telemetry.Handoffs.Add(1)
+				
+				// 1. Detach P 
+				m.Sched.IdlePs <- m.P
+				m.P = nil
+				
+				// 2. Ensure system wakes a sleeper or spawns replacement
+				m.Sched.wakeOrSpawnM()
+				
+				// 3. Process thick task independently
+				t.Fn(m.Sched.ctx)
+				m.ticks++
+				
+				// 4. Reacquire a P after dropping out of Syscall
+				newP, ok := <-m.Sched.IdlePs
+				if !ok || newP == nil {
+					return
+				}
+				m.P = newP
+
+			} else {
+				t.Fn(m.Sched.ctx)
+				m.ticks++
+			}
 		} else {
-			// No work found, go to sleep
 			atomic.AddInt32(&m.Sched.idleMs, 1)
 			m.Sched.idleCond.L.Lock()
 			
-			// Wait for work or shutdown signal
 			for !m.Sched.isStopped() && m.Sched.GlobalQ.Len() == 0 && m.P.LocalQ.Len() == 0 {
 				m.Sched.idleCond.Wait()
 			}
@@ -52,26 +83,21 @@ func (m *M) Run() {
 	}
 }
 
-// findWork implements the work-stealing algorithm.
 func (m *M) findWork() *Task {
-	// 1. Every 61 ticks, check the global queue to prevent starvation
 	if m.ticks != 0 && m.ticks%61 == 0 {
 		if t, ok := m.Sched.GlobalQ.PopFront(); ok {
 			return t
 		}
 	}
 
-	// 2. Local Queue
 	if t, err := m.P.LocalQ.PopFront(); err == nil {
 		return t
 	}
 
-	// 3. Global Queue
 	if t, ok := m.Sched.GlobalQ.PopFront(); ok {
 		return t
 	}
 
-	// 4. Work Stealing
 	for i := 0; i < len(m.Sched.Ps)*2; i++ {
 		targetP := m.Sched.Ps[rand.Intn(len(m.Sched.Ps))]
 		if targetP == m.P {
@@ -80,15 +106,13 @@ func (m *M) findWork() *Task {
 		
 		stolen := targetP.LocalQ.TakeHalf()
 		if len(stolen) > 0 {
-			// Return first stolen task
+			telemetry.TasksStolen.Add(int64(len(stolen)))
 			first := stolen[0]
-			// Enqueue the rest to local Q
 			for j := 1; j < len(stolen); j++ {
 				_ = m.P.LocalQ.PushBack(stolen[j])
 			}
 			return first
 		}
 	}
-
 	return nil
 }

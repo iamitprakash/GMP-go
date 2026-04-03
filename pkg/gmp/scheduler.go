@@ -7,13 +7,17 @@ import (
 	"sync/atomic"
 
 	"github.com/amitprakash/gmp-go/pkg/queue"
+	"github.com/amitprakash/gmp-go/pkg/telemetry"
 )
 
 // Scheduler manages the entire GMP lifecycle.
 type Scheduler struct {
-	GlobalQ    *queue.UnboundedQueue[*Task]
-	Ps         []*P
-	Ms         []*M
+	GlobalQ *queue.UnboundedQueue[*Task]
+	Ps      []*P
+	
+	MsMu    sync.Mutex
+	Ms      []*M
+	IdlePs  chan *P // Channel representing the pool of unused Processors (Handoff pool)
 	
 	taskIDGen  int64
 	localQSize int
@@ -27,13 +31,14 @@ type Scheduler struct {
 	stopped int32
 }
 
-// NewScheduler creates a scheduler with numP processors and localQSize capacity for each local P queue.
+// NewScheduler creates a scheduler with numP processors.
 func NewScheduler(numP int, localQSize int) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Scheduler{
 		GlobalQ:    queue.NewUnboundedQueue[*Task](),
 		Ps:         make([]*P, numP),
-		Ms:         make([]*M, numP),
+		Ms:         make([]*M, 0, numP*2), // Capacity pre-allocated for dynamic spawning
+		IdlePs:     make(chan *P, numP),
 		localQSize: localQSize,
 		idleCond:   sync.NewCond(&sync.Mutex{}),
 		ctx:        ctx,
@@ -42,21 +47,25 @@ func NewScheduler(numP int, localQSize int) *Scheduler {
 
 	for i := 0; i < numP; i++ {
 		s.Ps[i] = NewP(i, localQSize)
-		// Default tie M to P at startup
-		s.Ms[i] = NewM(i, s, s.Ps[i])
+		s.IdlePs <- s.Ps[i]
+		
+		newM := NewM(i, s)
+		s.Ms = append(s.Ms, newM)
 	}
 	return s
 }
 
 // Start launches all Ms (machines/threads).
 func (s *Scheduler) Start() {
+	s.MsMu.Lock()
+	defer s.MsMu.Unlock()
+	
 	for _, m := range s.Ms {
 		s.wg.Add(1)
 		go m.Run()
 	}
 }
 
-// isStopped is a helper to check if scheduler is shut down.
 func (s *Scheduler) isStopped() bool {
 	return atomic.LoadInt32(&s.stopped) == 1
 }
@@ -66,7 +75,8 @@ func (s *Scheduler) Stop() {
 	atomic.StoreInt32(&s.stopped, 1)
 	s.cancel()
 
-	// Wake all idle Ms so they can exit.
+	close(s.IdlePs) // Unblock dynamic Ps
+
 	s.idleCond.L.Lock()
 	s.idleCond.Broadcast()
 	s.idleCond.L.Unlock()
@@ -74,16 +84,28 @@ func (s *Scheduler) Stop() {
 	s.wg.Wait()
 }
 
-// Submit enqueues a new function to be scheduled.
+// Submit enqueues a standard function.
 func (s *Scheduler) Submit(fn func(context.Context)) {
-	t := &Task{
+	s.submitTask(&Task{
 		ID: atomic.AddInt64(&s.taskIDGen, 1),
 		Fn: fn,
-	}
+	})
+}
 
+// SubmitBlocking enqueues a system-blocking function, forcing a handoff.
+func (s *Scheduler) SubmitBlocking(fn func(context.Context)) {
+	s.submitTask(&Task{
+		ID:       atomic.AddInt64(&s.taskIDGen, 1),
+		Blocking: true,
+		Fn:       fn,
+	})
+}
+
+func (s *Scheduler) submitTask(t *Task) {
+	telemetry.TasksSubmitted.Add(1)
+	
 	placed := false
 	if len(s.Ps) > 0 {
-		// Attempt to place in a random P's local queue first
 		p := s.Ps[rand.Intn(len(s.Ps))]
 		if err := p.LocalQ.PushBack(t); err == nil {
 			placed = true
@@ -94,10 +116,33 @@ func (s *Scheduler) Submit(fn func(context.Context)) {
 		s.GlobalQ.PushBack(t)
 	}
 
-	// Wake an idle M if needed
 	if atomic.LoadInt32(&s.idleMs) > 0 {
 		s.idleCond.L.Lock()
 		s.idleCond.Signal()
 		s.idleCond.L.Unlock()
 	}
+}
+
+// wakeOrSpawnM handles the Handoff logic by ensuring a thread exists to process the newly idled P.
+func (s *Scheduler) wakeOrSpawnM() {
+	s.idleCond.L.Lock()
+	if atomic.LoadInt32(&s.idleMs) > 0 {
+		s.idleCond.Signal()
+		s.idleCond.L.Unlock()
+		return
+	}
+	s.idleCond.L.Unlock()
+
+	if s.isStopped() {
+		return
+	}
+
+	// Dynamic Spawning Protocol (Simulating Go OS thread expansion on lock)
+	s.MsMu.Lock()
+	newID := len(s.Ms)
+	newM := NewM(newID, s)
+	s.Ms = append(s.Ms, newM)
+	s.wg.Add(1)
+	go newM.Run()
+	s.MsMu.Unlock()
 }

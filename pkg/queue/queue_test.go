@@ -5,7 +5,7 @@ import (
 )
 
 func TestBoundedQueue(t *testing.T) {
-	q := NewBoundedQueue[int](3)
+	q := NewBoundedQueue[int](4) // Uses exact power of 2 
 
 	if err := q.PushBack(1); err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -16,8 +16,11 @@ func TestBoundedQueue(t *testing.T) {
 	if err := q.PushBack(3); err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
+	if err := q.PushBack(4); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 
-	if err := q.PushBack(4); err != ErrQueueFull {
+	if err := q.PushBack(5); err != ErrQueueFull {
 		t.Errorf("Expected ErrQueueFull, got %v", err)
 	}
 
@@ -25,8 +28,8 @@ func TestBoundedQueue(t *testing.T) {
 		t.Errorf("Expected 1, got %v (err: %v)", val, err)
 	}
 
-	if q.Len() != 2 {
-		t.Errorf("Expected length 2, got %d", q.Len())
+	if q.Len() != 3 {
+		t.Errorf("Expected length 3, got %d", q.Len())
 	}
 
 	stolen := q.TakeHalf()
@@ -37,8 +40,8 @@ func TestBoundedQueue(t *testing.T) {
 		t.Errorf("Expected stolen element to be 2, got %v", stolen[0])
 	}
 	
-	if q.Len() != 1 {
-		t.Errorf("Expected length 1 after steal, got %v", q.Len())
+	if q.Len() != 2 {
+		t.Errorf("Expected length 2 after steal, got %v", q.Len())
 	}
 }
 
