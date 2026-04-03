@@ -3,6 +3,7 @@ package telemetry
 import (
 	"expvar"
 	"net/http"
+	_ "net/http/pprof" // Embeds standard Go deep CPU profiling and Flame Graph routes seamlessly (/debug/pprof)
 )
 
 // Exported metrics for real-time profiling via expvar.
