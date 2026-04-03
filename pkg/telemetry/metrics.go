@@ -16,8 +16,9 @@ var (
 	IdleMs         = expvar.NewInt("gmp_idle_ms")
 )
 
-// StartServer starts a debug HTTP server to expose metrics at /debug/vars.
+// StartServer starts a debug HTTP server to expose metrics at /debug/vars and rendering.
 func StartServer(addr string) {
+	initDashboard() // Attaches Web UI to /dashboard
 	go func() {
 		// Non-blocking serving of standard expvar metrics
 		_ = http.ListenAndServe(addr, nil)

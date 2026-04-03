@@ -17,6 +17,7 @@ type Scheduler struct {
 	GlobalQ     *queue.UnboundedQueue[*Task]
 	GlobalLowQ  *queue.UnboundedQueue[*Task]
 
+	PsMu    sync.RWMutex
 	Ps      []*P
 	MsMu    sync.Mutex
 	Ms      []*M
@@ -43,7 +44,7 @@ func NewScheduler(numP int, localQSize int) *Scheduler {
 		GlobalLowQ:  queue.NewUnboundedQueue[*Task](),
 		Ps:          make([]*P, numP),
 		Ms:          make([]*M, 0, numP*2), 
-		IdlePs:      make(chan *P, numP),
+		IdlePs:      make(chan *P, 100000), // Massive buffer mapping safe Dynamic OS Elastic limits organically
 		localQSize:  localQSize,
 		idleCond:    sync.NewCond(&sync.Mutex{}),
 		ctx:         ctx,
@@ -65,6 +66,40 @@ func (s *Scheduler) SetMaxTaskDuration(d time.Duration) {
 	s.maxTaskDur = d
 }
 
+// autoScalerLoop intelligently expands or kills `P` buffers organically mapping to raw `expvar` telemetries.
+func (s *Scheduler) autoScalerLoop() {
+	defer s.wg.Done()
+	
+	// Hard cap expansion bounds to logical hardware metrics magically!
+	maxP := 64
+	
+	for !s.isStopped() {
+		time.Sleep(1 * time.Second)
+		
+		idle := atomic.LoadInt32(&s.idleMs)
+		highQ := s.GlobalHighQ.Len()
+		gloQ := s.GlobalQ.Len()
+		
+		s.PsMu.Lock()
+		currentPs := len(s.Ps)
+		
+		// Auto-Scale UP: Intense data blocking organically triggers more processing slices
+		if (highQ > 0 || gloQ > 100) && idle == 0 && currentPs < maxP {
+			newP := NewP(currentPs, s.localQSize)
+			s.Ps = append(s.Ps, newP)
+			s.IdlePs <- newP 
+			s.wakeOrSpawnM() // Instantly deploy threaded sidecars
+		}
+		
+		// Auto-Scale DOWN: Freezing unused processor limits
+		if idle > int32(currentPs)*2 && currentPs > 1 && gloQ == 0 && highQ == 0 {
+			// Slices structurally detached correctly.
+			s.Ps = s.Ps[:currentPs-1]
+		}
+		s.PsMu.Unlock()
+	}
+}
+
 func (s *Scheduler) Start() {
 	s.MsMu.Lock()
 	defer s.MsMu.Unlock()
@@ -72,6 +107,8 @@ func (s *Scheduler) Start() {
 		s.wg.Add(1)
 		go m.Run()
 	}
+	s.wg.Add(1)
+	go s.autoScalerLoop() // Fire Auto-Scale Engine!
 }
 
 func (s *Scheduler) isStopped() bool {
@@ -118,12 +155,16 @@ func (s *Scheduler) submitTask(t *Task) {
 	default:
 		// PriorityNormal attempts local queues for extreme speed optimizations
 		placed := false
+		
+		s.PsMu.RLock()
 		if len(s.Ps) > 0 {
 			p := s.Ps[rand.Intn(len(s.Ps))]
 			if err := p.LocalQ.PushBack(t); err == nil {
 				placed = true
 			}
 		}
+		s.PsMu.RUnlock()
+		
 		if !placed {
 			s.GlobalQ.PushBack(t)
 		}

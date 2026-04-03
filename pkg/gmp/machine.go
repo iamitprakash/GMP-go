@@ -105,21 +105,27 @@ func (m *M) findWork() *Task {
 		return t
 	}
 
-	// 5. Work Stealing sequence
-	for i := 0; i < len(m.Sched.Ps)*2; i++ {
-		targetP := m.Sched.Ps[rand.Intn(len(m.Sched.Ps))]
-		if targetP == m.P { continue }
-		
-		stolen := targetP.LocalQ.TakeHalf()
-		if len(stolen) > 0 {
-			telemetry.TasksStolen.Add(int64(len(stolen)))
-			first := stolen[0]
-			for j := 1; j < len(stolen); j++ {
-				_ = m.P.LocalQ.PushBack(stolen[j])
+	// 5. Work Stealing sequence securely mapping Dynamic Runtime Processor resizing loops
+	m.Sched.PsMu.RLock()
+	numP := len(m.Sched.Ps)
+	if numP > 0 {
+		for i := 0; i < numP*2; i++ {
+			targetP := m.Sched.Ps[rand.Intn(numP)]
+			if targetP == m.P { continue }
+			
+			stolen := targetP.LocalQ.TakeHalf()
+			if len(stolen) > 0 {
+				telemetry.TasksStolen.Add(int64(len(stolen)))
+				first := stolen[0]
+				for j := 1; j < len(stolen); j++ {
+					_ = m.P.LocalQ.PushBack(stolen[j])
+				}
+				m.Sched.PsMu.RUnlock()
+				return first
 			}
-			return first
 		}
 	}
+	m.Sched.PsMu.RUnlock()
 	
 	// 6. Background Activity Execution Fallback (Low priority executed only on total idle)
 	if t, ok := m.Sched.GlobalLowQ.PopFront(); ok {
