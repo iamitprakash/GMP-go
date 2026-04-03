@@ -1,79 +1,78 @@
 package gmp
 
 import (
+	"context"
 	"math/rand"
 	"sync/atomic"
 
 	"github.com/amitprakash/gmp-go/pkg/telemetry"
 )
 
-// M represents a Machine (OS Thread) in the GMP model.
 type M struct {
 	ID    int
 	Sched *Scheduler
-	P     *P // Dynamically assigned processor
+	P     *P 
 	ticks uint64
 }
 
-// NewM creates a new Machine unassigned.
 func NewM(id int, s *Scheduler) *M {
-	return &M{
-		ID:    id,
-		Sched: s,
-	}
+	return &M{ID: id, Sched: s}
 }
 
-// Run is the OS thread simulation.
+func (m *M) executeTask(t *Task) {
+	if m.Sched.maxTaskDur > 0 {
+		// Enforce Preemption
+		ctx, cancel := context.WithTimeout(m.Sched.ctx, m.Sched.maxTaskDur)
+		defer cancel()
+		t.Fn(ctx)
+	} else {
+		t.Fn(m.Sched.ctx)
+	}
+	m.ticks++
+}
+
 func (m *M) Run() {
 	defer m.Sched.wg.Done()
 	telemetry.ActiveMs.Add(1)
 	defer telemetry.ActiveMs.Add(-1)
 
 	p, ok := <-m.Sched.IdlePs
-	if !ok || p == nil {
-		return 
-	}
+	if !ok || p == nil { return }
 	m.P = p
 
-	for {
-		if m.Sched.isStopped() {
-			return
-		}
-
+	for !m.Sched.isStopped() {
 		t := m.findWork()
+		
 		if t != nil {
 			telemetry.TasksExecuted.Add(1)
 
 			if t.Blocking {
 				telemetry.Handoffs.Add(1)
-				
-				// 1. Detach P 
 				m.Sched.IdlePs <- m.P
 				m.P = nil
-				
-				// 2. Ensure system wakes a sleeper or spawns replacement
 				m.Sched.wakeOrSpawnM()
 				
-				// 3. Process thick task independently
-				t.Fn(m.Sched.ctx)
-				m.ticks++
+				m.executeTask(t)
 				
-				// 4. Reacquire a P after dropping out of Syscall
 				newP, ok := <-m.Sched.IdlePs
-				if !ok || newP == nil {
-					return
-				}
+				if !ok || newP == nil { return }
 				m.P = newP
 
 			} else {
-				t.Fn(m.Sched.ctx)
-				m.ticks++
+				m.executeTask(t)
 			}
 		} else {
+			telemetry.IdleMs.Add(1)
 			atomic.AddInt32(&m.Sched.idleMs, 1)
 			m.Sched.idleCond.L.Lock()
 			
-			for !m.Sched.isStopped() && m.Sched.GlobalQ.Len() == 0 && m.P.LocalQ.Len() == 0 {
+			// Checks if ALL Queues are empty before properly sleeping
+			for !m.Sched.isStopped() && 
+				m.Sched.GlobalHighQ.Len() == 0 &&
+				m.Sched.GlobalQ.Len() == 0 && 
+				m.P.LocalQ.Len() == 0 &&
+				m.Sched.GlobalLowQ.Len() == 0 {
+					
 				m.Sched.idleCond.Wait()
 			}
 			
@@ -84,25 +83,32 @@ func (m *M) Run() {
 }
 
 func (m *M) findWork() *Task {
+	// 1. High Priority Execution Override
+	if t, ok := m.Sched.GlobalHighQ.PopFront(); ok {
+		return t
+	}
+
+	// 2. Anti-Starvation standard Global polling
 	if m.ticks != 0 && m.ticks%61 == 0 {
 		if t, ok := m.Sched.GlobalQ.PopFront(); ok {
 			return t
 		}
 	}
 
+	// 3. Local P execution queue
 	if t, err := m.P.LocalQ.PopFront(); err == nil {
 		return t
 	}
 
+	// 4. Global standard queue lookup
 	if t, ok := m.Sched.GlobalQ.PopFront(); ok {
 		return t
 	}
 
+	// 5. Work Stealing sequence
 	for i := 0; i < len(m.Sched.Ps)*2; i++ {
 		targetP := m.Sched.Ps[rand.Intn(len(m.Sched.Ps))]
-		if targetP == m.P {
-			continue
-		}
+		if targetP == m.P { continue }
 		
 		stolen := targetP.LocalQ.TakeHalf()
 		if len(stolen) > 0 {
@@ -114,5 +120,11 @@ func (m *M) findWork() *Task {
 			return first
 		}
 	}
+	
+	// 6. Background Activity Execution Fallback (Low priority executed only on total idle)
+	if t, ok := m.Sched.GlobalLowQ.PopFront(); ok {
+		return t
+	}
+
 	return nil
 }
