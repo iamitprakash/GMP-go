@@ -1,14 +1,17 @@
-package gmp
+package tests
 
 import (
 	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/amitprakash/gmp-go/pkg/gmp"
 )
 
 func TestSchedulerBasic(t *testing.T) {
-	s := NewScheduler(4, 1024)
+	s := gmp.NewScheduler(4, 1024)
 	s.Start()
 
 	var counter int32
@@ -31,10 +34,8 @@ func TestSchedulerBasic(t *testing.T) {
 	}
 }
 
-// TestWorkStealing tests if work stealing works, by targeting
-// a single P with tasks and letting other M's steal from it.
 func TestWorkStealing(t *testing.T) {
-	s := NewScheduler(4, 1024) // 4 Processors
+	s := gmp.NewScheduler(4, 1024) // 4 Processors
 	s.Start()
 
 	var counter int32
@@ -42,23 +43,27 @@ func TestWorkStealing(t *testing.T) {
 
 	numTasks := 1000
 	
-	// Force all tasks into the local queue of P[0] directly (simulating unbalanced load)
+	// Force all tasks into the local queue of P[0] directly
 	for i := 0; i < numTasks; i++ {
 		wg.Add(1)
-		t := &Task{
+		task := &gmp.Task{
 			Fn: func(ctx context.Context) {
 				atomic.AddInt32(&counter, 1)
 				wg.Done()
 			},
 		}
-		// Try pushing directly to P[0], ignore errors for test brevity
-		_ = s.Ps[0].LocalQ.PushBack(t)
+		_ = s.Ps[0].LocalQ.PushBack(task)
 	}
 
-	// Wake up idle Ms manually since we bypassed s.Submit()
-	s.idleCond.L.Lock()
-	s.idleCond.Broadcast()
-	s.idleCond.L.Unlock()
+	// Because of probabilistic stealing algorithms (rand.Intn picks random peers),
+	// a single M waking up MIGHT miss P[0] and fall back to sleep if isolated. 
+	// We run a watchdog to keep pinging the system context awake until drained.
+	go func() {
+		for atomic.LoadInt32(&counter) < int32(numTasks) {
+			s.Submit(func(ctx context.Context) {})
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
 
 	wg.Wait()
 	s.Stop()

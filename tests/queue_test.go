@@ -1,11 +1,12 @@
-package queue
+package tests
 
 import (
 	"testing"
+	"github.com/amitprakash/gmp-go/pkg/queue"
 )
 
 func TestBoundedQueue(t *testing.T) {
-	q := NewBoundedQueue[int](4) // Uses exact power of 2 
+	q := queue.NewBoundedQueue[int](4) // Uses exact power of 2 
 
 	if err := q.PushBack(1); err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -20,8 +21,8 @@ func TestBoundedQueue(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	if err := q.PushBack(5); err != ErrQueueFull {
-		t.Errorf("Expected ErrQueueFull, got %v", err)
+	if err := q.PushBack(5); err != queue.ErrQueueFull {
+		t.Errorf("Expected queue.ErrQueueFull, got %v", err)
 	}
 
 	if val, err := q.PopFront(); err != nil || val != 1 {
@@ -46,7 +47,7 @@ func TestBoundedQueue(t *testing.T) {
 }
 
 func TestUnboundedQueue(t *testing.T) {
-	q := NewUnboundedQueue[int]()
+	q := queue.NewUnboundedQueue[int]()
 
 	q.PushBack(1)
 	q.PushBack(2)
