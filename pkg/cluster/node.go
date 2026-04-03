@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amitprakash/gmp-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
 )
 
 // TaskPayload represents generic JSON-serializable boundary rules to port execution logic

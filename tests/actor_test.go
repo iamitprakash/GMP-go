@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/amitprakash/gmp-go/pkg/actor"
-	"github.com/amitprakash/gmp-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/actor"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
 )
 
 func TestActorSystem(t *testing.T) {

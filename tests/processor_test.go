@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/amitprakash/gmp-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
 )
 
 func TestProcessorCreation(t *testing.T) {

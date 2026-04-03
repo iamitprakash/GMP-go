@@ -2,7 +2,7 @@ package tests
 
 import (
 	"testing"
-	"github.com/amitprakash/gmp-go/pkg/queue"
+	"github.com/iamitprakash/GMP-go/pkg/queue"
 )
 
 func TestBoundedQueue(t *testing.T) {

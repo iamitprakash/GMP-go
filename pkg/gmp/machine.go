@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"sync/atomic"
 
-	"github.com/amitprakash/gmp-go/pkg/telemetry"
+	"github.com/iamitprakash/GMP-go/pkg/telemetry"
 )
 
 type M struct {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amitprakash/gmp-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
 )
 
 func TestSchedulerBasic(t *testing.T) {

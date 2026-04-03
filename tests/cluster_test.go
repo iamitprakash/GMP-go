@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amitprakash/gmp-go/pkg/cluster"
-	"github.com/amitprakash/gmp-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/cluster"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
 )
 
 func TestClusterDistributedStealing(t *testing.T) {

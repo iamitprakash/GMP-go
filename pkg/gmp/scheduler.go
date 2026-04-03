@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/amitprakash/gmp-go/pkg/queue"
-	"github.com/amitprakash/gmp-go/pkg/telemetry"
+	"github.com/iamitprakash/GMP-go/pkg/queue"
+	"github.com/iamitprakash/GMP-go/pkg/telemetry"
 )
 
 // Scheduler manages the entire GMP lifecycle.

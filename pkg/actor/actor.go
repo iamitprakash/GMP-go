@@ -5,8 +5,8 @@ import (
 	"sync"
 	"log"
 
-	"github.com/amitprakash/gmp-go/pkg/gmp"
-	"github.com/amitprakash/gmp-go/pkg/queue"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/queue"
 )
 
 // Actor maps a state-isolated entity onto the GMP subsystem utilizing work-stealing backbone.

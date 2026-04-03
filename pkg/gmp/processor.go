@@ -1,7 +1,7 @@
 package gmp
 
 import (
-	"github.com/amitprakash/gmp-go/pkg/queue"
+	"github.com/iamitprakash/GMP-go/pkg/queue"
 )
 
 // P represents a Processor in the GMP model.

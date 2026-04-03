@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/amitprakash/gmp-go/pkg/actor"
-	"github.com/amitprakash/gmp-go/pkg/cluster"
-	"github.com/amitprakash/gmp-go/pkg/gmp"
-	"github.com/amitprakash/gmp-go/pkg/telemetry"
+	"github.com/iamitprakash/GMP-go/pkg/actor"
+	"github.com/iamitprakash/GMP-go/pkg/cluster"
+	"github.com/iamitprakash/GMP-go/pkg/gmp"
+	"github.com/iamitprakash/GMP-go/pkg/telemetry"
 )
 
 func main() {

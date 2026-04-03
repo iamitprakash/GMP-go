@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/amitprakash/gmp-go/pkg/telemetry"
+	"github.com/iamitprakash/GMP-go/pkg/telemetry"
 )
 
 func TestTelemetryMetrics(t *testing.T) {
