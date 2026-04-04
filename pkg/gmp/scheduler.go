@@ -82,13 +82,14 @@ func (s *Scheduler) autoScalerLoop() {
 		
 		s.PsMu.Lock()
 		currentPs := len(s.Ps)
+		needsWake := false
 		
 		// Auto-Scale UP: Intense data blocking organically triggers more processing slices
 		if (highQ > 0 || gloQ > 100) && idle == 0 && currentPs < maxP {
 			newP := NewP(currentPs, s.localQSize)
 			s.Ps = append(s.Ps, newP)
 			s.IdlePs <- newP 
-			s.wakeOrSpawnM() // Instantly deploy threaded sidecars
+			needsWake = true
 		}
 		
 		// Auto-Scale DOWN: Freezing unused processor limits
@@ -97,6 +98,10 @@ func (s *Scheduler) autoScalerLoop() {
 			s.Ps = s.Ps[:currentPs-1]
 		}
 		s.PsMu.Unlock()
+		
+		if needsWake {
+			s.wakeOrSpawnM() // Instantly deploy threaded sidecars
+		}
 	}
 }
 

@@ -67,12 +67,7 @@ func (m *M) Run() {
 			m.Sched.idleCond.L.Lock()
 			
 			// Checks if ALL Queues are empty before properly sleeping
-			for !m.Sched.isStopped() && 
-				m.Sched.GlobalHighQ.Len() == 0 &&
-				m.Sched.GlobalQ.Len() == 0 && 
-				m.P.LocalQ.Len() == 0 &&
-				m.Sched.GlobalLowQ.Len() == 0 {
-					
+			for !m.Sched.isStopped() && !m.hasWorkAcrossAllQueues() {
 				m.Sched.idleCond.Wait()
 			}
 			
@@ -109,8 +104,9 @@ func (m *M) findWork() *Task {
 	m.Sched.PsMu.RLock()
 	numP := len(m.Sched.Ps)
 	if numP > 0 {
-		for i := 0; i < numP*2; i++ {
-			targetP := m.Sched.Ps[rand.Intn(numP)]
+		startIndex := rand.Intn(numP)
+		for i := 0; i < numP; i++ {
+			targetP := m.Sched.Ps[(startIndex+i)%numP]
 			if targetP == m.P { continue }
 			
 			stolen := targetP.LocalQ.TakeHalf()
@@ -133,4 +129,18 @@ func (m *M) findWork() *Task {
 	}
 
 	return nil
+}
+
+func (m *M) hasWorkAcrossAllQueues() bool {
+	if m.Sched.GlobalHighQ.Len() > 0 || m.Sched.GlobalQ.Len() > 0 || m.Sched.GlobalLowQ.Len() > 0 {
+		return true
+	}
+	m.Sched.PsMu.RLock()
+	defer m.Sched.PsMu.RUnlock()
+	for _, p := range m.Sched.Ps {
+		if p != nil && p.LocalQ.Len() > 0 {
+			return true
+		}
+	}
+	return false
 }
