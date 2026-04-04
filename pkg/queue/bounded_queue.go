@@ -113,9 +113,13 @@ func (q *BoundedQueue[T]) Len() int {
 // TakeHalf iteratively pops up to half the items, creating a work-stealing batch.
 func (q *BoundedQueue[T]) TakeHalf() []T {
 	length := q.Len()
+	if length == 0 {
+		return nil
+	}
 	stealCount := length / 2
 	if stealCount == 0 {
-		return nil
+		// Steal the last item to prevent indefinite stalling if owner M is sleeping
+		stealCount = 1
 	}
 
 	stolen := make([]T, 0, stealCount)
