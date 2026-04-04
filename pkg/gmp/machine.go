@@ -114,7 +114,9 @@ func (m *M) findWork() *Task {
 				telemetry.TasksStolen.Add(int64(len(stolen)))
 				first := stolen[0]
 				for j := 1; j < len(stolen); j++ {
-					_ = m.P.LocalQ.PushBack(stolen[j])
+					if err := m.P.LocalQ.PushBack(stolen[j]); err != nil {
+						m.Sched.GlobalQ.PushBack(stolen[j])
+					}
 				}
 				m.Sched.PsMu.RUnlock()
 				return first
